@@ -401,6 +401,59 @@ async function handleFileMessage(event, client, sharedFile) {
   }
 }
 
+// ─── Follow-up after ticket ───────────────────────────────────────────────────
+
+async function detectFollowUpIntent(message) {
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 10,
+    messages: [{
+      role: "user",
+      content: `El usuario respondió: "${message}". ¿Está diciendo que no necesita nada más / se despide, o tiene otro pedido? Respondé solo: GOODBYE o CONTINUE`,
+    }],
+  });
+  return response.content[0].text.trim().startsWith("GOODBYE") ? "goodbye" : "continue";
+}
+
+async function handleFollowUpMessage(event, client, text) {
+  const sessionId = event.user;
+  const session = sessions[sessionId];
+
+  try {
+    const intent = await detectFollowUpIntent(text);
+
+    if (intent === "goodbye") {
+      const firstName = session?.userName?.split(" ")[0] || "";
+      delete sessions[sessionId];
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: `¡Perfecto${firstName ? `, ${firstName}` : ""}! Fue un placer ayudarte. Que tengas una excelente jornada 👋`,
+      });
+      return;
+    }
+
+    // User has another request — clear flag and continue normally
+    session.awaitingFollowUp = false;
+    const result = await chat(sessionId, text);
+
+    if (result.type === "message") {
+      await client.chat.postMessage({ channel: event.channel, text: result.text });
+    } else if (result.type === "ready") {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
+        blocks: formatPreview(result.ticket),
+      });
+    }
+  } catch (err) {
+    console.error("Follow-up error:", err);
+    await client.chat.postMessage({
+      channel: event.channel,
+      text: "Hubo un error. Por favor intentá de nuevo.",
+    });
+  }
+}
+
 // ─── Slack event handlers ─────────────────────────────────────────────────────
 
 // DM or mention handler
@@ -427,6 +480,11 @@ app.event("message", async ({ event, client }) => {
   const sessionId = event.user;
   const text = event.text?.trim();
   if (!text) return;
+
+  if (sessions[sessionId]?.awaitingFollowUp) {
+    await handleFollowUpMessage(event, client, text);
+    return;
+  }
 
   try {
     const result = await chat(sessionId, text);
@@ -487,8 +545,15 @@ app.action("confirm_ticket", async ({ body, ack, client }) => {
       text: `Ticket ${jiraIssue.key} creado en Jira.`,
     });
 
-    // Clear session
-    delete sessions[sessionId];
+    // Reset conversation but keep profile for potential follow-up
+    session.history = [];
+    session.ticket = null;
+    session.awaitingFollowUp = true;
+
+    await client.chat.postMessage({
+      channel: body.channel.id,
+      text: "¿Necesitás que te ayude con algo más?",
+    });
   } catch (err) {
     const jiraErrors = err.response?.data?.errors;
     const jiraMessages = err.response?.data?.errorMessages;
