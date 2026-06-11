@@ -77,15 +77,18 @@ async function searchSimilarJiraTickets(ticket) {
     `${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`
   ).toString("base64");
 
-  const words = [ticket.summary, ticket.problem]
-    .join(" ")
+  const keywords = ticket.summary
     .split(/\s+/)
-    .filter((w) => w.length > 4)
-    .slice(0, 8)
-    .map((w) => w.replace(/['"\\]/g, ""))
-    .join(" ");
+    .map((w) => w.replace(/['"\\()]/g, "").toLowerCase())
+    .filter((w) => w.length > 3)
+    .slice(0, 6);
 
-  const jql = `project = "${process.env.JIRA_PROJECT_KEY}" AND statusCategory != Done AND text ~ "${words}" ORDER BY created DESC`;
+  if (keywords.length === 0) return [];
+
+  const orConditions = keywords.map((w) => `text ~ "${w}"`).join(" OR ");
+  const jql = `project = "${process.env.JIRA_PROJECT_KEY}" AND statusCategory != Done AND (${orConditions}) ORDER BY created DESC`;
+
+  console.log("[duplicate-check] JQL:", jql);
 
   const res = await axios.get(
     `https://${process.env.JIRA_DOMAIN}/rest/api/3/search`,
@@ -95,7 +98,9 @@ async function searchSimilarJiraTickets(ticket) {
     }
   );
 
-  return res.data.issues || [];
+  const issues = res.data.issues || [];
+  console.log(`[duplicate-check] Candidatos Jira: ${issues.length}`);
+  return issues;
 }
 
 async function filterSimilarWithClaude(newTicket, candidates) {
@@ -122,6 +127,7 @@ ${candidateList}
   });
 
   const reply = response.content[0].text.trim().toUpperCase();
+  console.log("[duplicate-check] Claude respondió:", reply);
   if (reply === "NINGUNO" || reply === "") return [];
 
   const indices = reply
