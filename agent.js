@@ -71,6 +71,31 @@ async function createJiraTicket(ticket) {
   return res.data;
 }
 
+async function searchSimilarJiraTickets(ticket) {
+  const auth = Buffer.from(
+    `${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`
+  ).toString("base64");
+
+  const words = [ticket.summary, ticket.problem]
+    .join(" ")
+    .split(/\s+/)
+    .filter((w) => w.length > 4)
+    .slice(0, 6)
+    .join(" ");
+
+  const jql = `project = "${process.env.JIRA_PROJECT_KEY}" AND statusCategory != Done AND text ~ "${words}" ORDER BY created DESC`;
+
+  const res = await axios.get(
+    `https://${process.env.JIRA_DOMAIN}/rest/api/3/search`,
+    {
+      headers: { Authorization: `Basic ${auth}` },
+      params: { jql, maxResults: 3, fields: "summary,status" },
+    }
+  );
+
+  return res.data.issues || [];
+}
+
 function paragraph(text) {
   return {
     type: "paragraph",
@@ -340,11 +365,8 @@ async function handleAudioMessage(event, client, audioFile) {
         text: transcriptHeader + result.text,
       });
     } else if (result.type === "ready") {
-      await client.chat.postMessage({
-        channel: event.channel,
-        text: transcriptHeader + "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
-        blocks: formatPreview(result.ticket),
-      });
+      await client.chat.postMessage({ channel: event.channel, text: transcriptHeader.trim() });
+      await postTicketPreview(event.channel, result.ticket, client);
     }
   } catch (err) {
     console.error("Audio processing error:", err);
@@ -386,11 +408,7 @@ async function handleFileMessage(event, client, sharedFile) {
         text: result.text,
       });
     } else if (result.type === "ready") {
-      await client.chat.postMessage({
-        channel: event.channel,
-        text: "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
-        blocks: formatPreview(result.ticket),
-      });
+      await postTicketPreview(event.channel, result.ticket, client);
     }
   } catch (err) {
     console.error("File processing error:", err);
@@ -399,6 +417,34 @@ async function handleFileMessage(event, client, sharedFile) {
       text: "Hubo un error procesando el archivo. Por favor intentá de nuevo o escribí tu mensaje.",
     });
   }
+}
+
+// ─── Ticket preview with duplicate check ─────────────────────────────────────
+
+async function postTicketPreview(channel, ticket, client) {
+  if (ticket.userType === "interno") {
+    try {
+      const similar = await searchSimilarJiraTickets(ticket);
+      if (similar.length > 0) {
+        const domain = process.env.JIRA_DOMAIN;
+        const links = similar
+          .map((t) => `• <https://${domain}/browse/${t.key}|${t.key}> — ${t.fields.summary} _(${t.fields.status.name})_`)
+          .join("\n");
+        await client.chat.postMessage({
+          channel,
+          text: `⚠️ Antes de continuar, encontré ${similar.length === 1 ? "un ticket" : "algunos tickets"} que podrían ser similares al tuyo:\n${links}\n\nIgualmente te muestro el borrador por si querés continuar:`,
+        });
+      }
+    } catch (err) {
+      console.error("Jira duplicate check error:", err?.message);
+    }
+  }
+
+  await client.chat.postMessage({
+    channel,
+    text: "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
+    blocks: formatPreview(ticket),
+  });
 }
 
 // ─── Follow-up after ticket ───────────────────────────────────────────────────
@@ -439,11 +485,7 @@ async function handleFollowUpMessage(event, client, text) {
     if (result.type === "message") {
       await client.chat.postMessage({ channel: event.channel, text: result.text });
     } else if (result.type === "ready") {
-      await client.chat.postMessage({
-        channel: event.channel,
-        text: "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
-        blocks: formatPreview(result.ticket),
-      });
+      await postTicketPreview(event.channel, result.ticket, client);
     }
   } catch (err) {
     console.error("Follow-up error:", err);
@@ -495,11 +537,7 @@ app.event("message", async ({ event, client }) => {
         text: result.text,
       });
     } else if (result.type === "ready") {
-      await client.chat.postMessage({
-        channel: event.channel,
-        text: "Listo, tengo todo lo que necesito. Revisá el borrador antes de que lo mande:",
-        blocks: formatPreview(result.ticket),
-      });
+      await postTicketPreview(event.channel, result.ticket, client);
     }
   } catch (err) {
     console.error("Agent error:", err);
