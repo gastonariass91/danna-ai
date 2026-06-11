@@ -12,7 +12,7 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 4 });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // In-memory sessions (use Redis in production)
@@ -604,9 +604,12 @@ app.event("message", async ({ event, client }) => {
     }
   } catch (err) {
     console.error("Agent error:", err);
+    const isOverloaded = err.status === 529 || err.error?.type === "overloaded_error";
     await client.chat.postMessage({
       channel: event.channel,
-      text: "Hubo un error procesando tu mensaje. Por favor intentá de nuevo.",
+      text: isOverloaded
+        ? "La IA está con mucha demanda en este momento. Esperá unos segundos y volvé a intentarlo."
+        : "Hubo un error procesando tu mensaje. Por favor intentá de nuevo.",
     });
   }
 });
