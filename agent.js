@@ -85,7 +85,7 @@ async function searchSimilarJiraTickets(ticket) {
 
   if (keywords.length === 0) return [];
 
-  const orConditions = keywords.map((w) => `text ~ "${w}"`).join(" OR ");
+  const orConditions = keywords.map((w) => `summary ~ "${w}"`).join(" OR ");
   const jql = `project = "${process.env.JIRA_PROJECT_KEY}" AND statusCategory != Done AND (${orConditions}) ORDER BY created DESC`;
 
   console.log("[duplicate-check] JQL:", jql);
@@ -299,6 +299,8 @@ function checkAndRefreshSession(sessionId) {
 }
 
 async function resolveUserProfile(userId, client) {
+  if (!userId?.startsWith("U")) return;
+
   if (!sessions[userId]) {
     sessions[userId] = { history: [], ticket: null, userName: null, userEmail: null, userType: null, lastActivity: Date.now() };
   }
