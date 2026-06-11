@@ -90,11 +90,14 @@ async function searchSimilarJiraTickets(ticket) {
 
   console.log("[duplicate-check] JQL:", jql);
 
-  const res = await axios.get(
+  const res = await axios.post(
     `https://${process.env.JIRA_DOMAIN}/rest/api/3/search`,
+    { jql, maxResults: 10, fields: ["summary", "status"] },
     {
-      headers: { Authorization: `Basic ${auth}` },
-      params: { jql, maxResults: 10, fields: "summary,status" },
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
     }
   );
 
