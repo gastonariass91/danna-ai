@@ -17,6 +17,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // In-memory sessions (use Redis in production)
 const sessions = {};
+const SESSION_TTL_MS = (parseInt(process.env.SESSION_TTL_HOURS) || 8) * 60 * 60 * 1000;
 
 // ─── Jira ────────────────────────────────────────────────────────────────────
 
@@ -187,7 +188,7 @@ function buildSystemPrompt(session) {
 
 async function chat(sessionId, userMessage) {
   if (!sessions[sessionId]) {
-    sessions[sessionId] = { history: [], ticket: null, userName: null, userEmail: null, userType: null };
+    sessions[sessionId] = { history: [], ticket: null, userName: null, userEmail: null, userType: null, lastActivity: Date.now() };
   }
 
   const session = sessions[sessionId];
@@ -277,9 +278,23 @@ function field(label, value) {
 
 // ─── User profile resolution ─────────────────────────────────────────────────
 
+function checkAndRefreshSession(sessionId) {
+  const session = sessions[sessionId];
+  if (!session?.lastActivity) return false;
+
+  const expired = Date.now() - session.lastActivity > SESSION_TTL_MS;
+  if (expired) {
+    session.history = [];
+    session.ticket = null;
+    session.awaitingFollowUp = false;
+  }
+  session.lastActivity = Date.now();
+  return expired;
+}
+
 async function resolveUserProfile(userId, client) {
   if (!sessions[userId]) {
-    sessions[userId] = { history: [], ticket: null, userName: null, userEmail: null, userType: null };
+    sessions[userId] = { history: [], ticket: null, userName: null, userEmail: null, userType: null, lastActivity: Date.now() };
   }
   const session = sessions[userId];
   if (session.userName) return;
@@ -540,6 +555,7 @@ app.event("message", async ({ event, client }) => {
   if (event.bot_id) return;
 
   await resolveUserProfile(event.user, client);
+  checkAndRefreshSession(event.user);
 
   // Handle file shares (audio, image, PDF, other)
   if (event.subtype === "file_share" && event.files?.length > 0) {
