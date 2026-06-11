@@ -1,0 +1,17 @@
+{
+  "name": "product-agent-slack",
+  "version": "1.0.0",
+  "description": "Agente conversacional para recopilación de pedidos a Producto vía Slack",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "dev": "node --watch agent.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@slack/bolt": "^3.19.0",
+    "axios": "^1.7.0",
+    "dotenv": "^17.4.2",
+    "openai": "^6.42.0"
+  }
+}
