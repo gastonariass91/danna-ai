@@ -80,7 +80,8 @@ async function searchSimilarJiraTickets(ticket) {
     .join(" ")
     .split(/\s+/)
     .filter((w) => w.length > 4)
-    .slice(0, 6)
+    .slice(0, 8)
+    .map((w) => w.replace(/['"\\]/g, ""))
     .join(" ");
 
   const jql = `project = "${process.env.JIRA_PROJECT_KEY}" AND statusCategory != Done AND text ~ "${words}" ORDER BY created DESC`;
@@ -89,11 +90,45 @@ async function searchSimilarJiraTickets(ticket) {
     `https://${process.env.JIRA_DOMAIN}/rest/api/3/search`,
     {
       headers: { Authorization: `Basic ${auth}` },
-      params: { jql, maxResults: 3, fields: "summary,status" },
+      params: { jql, maxResults: 10, fields: "summary,status" },
     }
   );
 
   return res.data.issues || [];
+}
+
+async function filterSimilarWithClaude(newTicket, candidates) {
+  if (candidates.length === 0) return [];
+
+  const candidateList = candidates
+    .map((t, i) => `${i + 1}. [${t.key}] ${t.fields.summary}`)
+    .join("\n");
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 60,
+    messages: [{
+      role: "user",
+      content: `Nuevo pedido:
+Título: "${newTicket.summary}"
+Problema: "${newTicket.problem}"
+
+Tickets abiertos en Jira:
+${candidateList}
+
+¿Cuáles de estos tickets tratan el mismo problema o uno muy similar, aunque usen palabras distintas? Respondé solo con los números separados por coma (ej: 1,3) o NINGUNO.`,
+    }],
+  });
+
+  const reply = response.content[0].text.trim().toUpperCase();
+  if (reply === "NINGUNO" || reply === "") return [];
+
+  const indices = reply
+    .split(",")
+    .map((n) => parseInt(n.trim()) - 1)
+    .filter((n) => !isNaN(n) && n >= 0 && n < candidates.length);
+
+  return indices.map((i) => candidates[i]);
 }
 
 function paragraph(text) {
@@ -424,7 +459,8 @@ async function handleFileMessage(event, client, sharedFile) {
 async function postTicketPreview(channel, ticket, client) {
   if (ticket.userType === "interno") {
     try {
-      const similar = await searchSimilarJiraTickets(ticket);
+      const candidates = await searchSimilarJiraTickets(ticket);
+      const similar = await filterSimilarWithClaude(ticket, candidates);
       if (similar.length > 0) {
         const domain = process.env.JIRA_DOMAIN;
         const links = similar
