@@ -175,12 +175,12 @@ REGLAS DE COMPORTAMIENTO:
 - Adaptá el tono según el tipo de usuario indicado en el contexto: con internos sé directo y técnico; con externos, más cálido y simple.
 - Si una respuesta es vaga, insuficiente o contradictoria, hacé una pregunta de seguimiento antes de avanzar. No asumas.
 - No hagas más de 2 preguntas a la vez.
-- Cuando tengas toda la información necesaria (del 1 al 7, el 8 es opcional), respondé EXACTAMENTE con este JSON y nada más:
+- Cuando tengas toda la información necesaria (del 1 al 7, el 8 es opcional), tu respuesta completa debe ser ÚNICAMENTE esta línea, sin ningún texto antes ni después, sin saludos, sin explicaciones:
 
 TICKET_READY:{"userType":"...","requester":"...","summary":"...","problem":"...","impact":"...","workaround":"...","proposedSolution":"...","successCriteria":"...","priority":"...","extraContext":"..."}
 
 - El JSON debe estar en una sola línea, sin saltos de línea dentro.
-- No agregues texto antes ni después del JSON cuando lo emitas.
+- IMPORTANTE: Si escribís cualquier palabra antes o después del bloque TICKET_READY, el sistema no podrá procesar el ticket. La respuesta entera debe ser solo esa línea.
 - Antes de emitir el JSON, revisá internamente que cada campo tenga contenido real y útil para el equipo de Producto.`;
 
 function buildSystemPrompt(session) {
@@ -213,10 +213,10 @@ async function chat(sessionId, userMessage) {
   const reply = response.content[0].text;
   session.history.push({ role: "assistant", content: reply });
 
-  // Detect if agent has all the info
-  if (reply.startsWith("TICKET_READY:")) {
-    const json = reply.replace("TICKET_READY:", "").trim();
-    session.ticket = JSON.parse(json);
+  // Detect if agent has all the info (robust: works even if Claude adds preamble text)
+  const ticketMatch = reply.match(/TICKET_READY:(\{[\s\S]+\})/);
+  if (ticketMatch) {
+    session.ticket = JSON.parse(ticketMatch[1].trim());
     session.ticket.requesterEmail = session.userEmail;
     if (session.userType) session.ticket.userType = session.userType;
     return { type: "ready", ticket: session.ticket };
